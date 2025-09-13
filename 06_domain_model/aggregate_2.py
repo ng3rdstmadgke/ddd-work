@@ -1,6 +1,7 @@
 from pydantic import BaseModel, field_validator, Field, ConfigDict , PrivateAttr, computed_field
 from db import models as sa_models
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, update, delete, select
+from sqlalchemy.orm import Session
 from typing import Iterable
 import uuid
 import enum
@@ -92,6 +93,8 @@ class Order(BaseModel):
     # PrivateAttr は pydantic のモデルフィールドとして扱われない非公開属性を定義する
     __items: list[OrderItem] = PrivateAttr(default_factory=list) 
     __status: Status = PrivateAttr(default_factory=lambda: Status(value=StatusEnum.PENDING))
+    __version: int = PrivateAttr(default=1)  # 楽観的な排他制御用のバージョン番号
+
     model_config = ConfigDict(
         extra="forbid",           # インスタンス化時に未定義の属性があるとエラーにする
         validate_assignment=True, # 属性の再代入時にもバリデーションを行う
@@ -133,7 +136,13 @@ class Order(BaseModel):
     def items(self) -> list[OrderItem]:
         # 外にリストを直接渡すと変更されてしまうのでコピーを返す
         return copy.deepcopy(self.__items)
-    
+
+    @computed_field
+    @property
+    def version(self) -> int:
+        return self.__version
+
+
     @computed_field
     @property
     def total(self) -> Money:
@@ -144,16 +153,24 @@ class Order(BaseModel):
 
     # NOTE: ドメインのルールを破らずに永続化から復元するためのファクトリメソッド
     @classmethod
-    def from_persistence(cls, id: OrderID, status: Status, items: Iterable[OrderItem]) -> "Order":
+    def from_persistence(
+        cls,
+        id: OrderID,
+        status: Status,
+        items: Iterable[OrderItem],
+        version: int
+    ) -> "Order":
         o = cls(id=id)  # PENDING で初期化されるが、ここで上書きする
         setattr(o, f"_{cls.__name__}__status", status)  # PrivateAttr に直接セット
         setattr(o, f"_{cls.__name__}__items", list(items))
+        setattr(o, f"_{cls.__name__}__version", int(version))
         return o
 
 ################################
 # ドメインとSQLAlchemyの変換ヘルパ
 ################################
 
+# SQLAlchemyのアクティブレコードオブジェクトをドメインオブジェクトに変換
 def _sa_to_domain_item(ri: sa_models.OrderItem) -> OrderItem:
     return OrderItem(
         id=OrderItemID(value=uuid.UUID(ri.id)),
@@ -162,6 +179,7 @@ def _sa_to_domain_item(ri: sa_models.OrderItem) -> OrderItem:
         unit_price=Money(amount=ri.unit_price),
     )
 
+# ドメインオブジェクトをSQLAlchemyのアクティブレコードオブジェクトに変換
 def _domain_to_sa_items(order_id: OrderID, items: Iterable[OrderItem]) -> list[sa_models.OrderItem]:
     out: list[sa_models.OrderItem] = []
     for it in items:
@@ -179,7 +197,8 @@ def _domain_to_sa_items(order_id: OrderID, items: Iterable[OrderItem]) -> list[s
 ################################
 # リポジトリ
 ################################
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, Session
+class OptimisticLockError(Exception):
+    pass
 
 class OrderRepository:
     def __init__(self, session: Session):
@@ -190,22 +209,45 @@ class OrderRepository:
         if not sa: return None
         dom_items = [_sa_to_domain_item(ri) for ri in sa.items]
         status = Status(value=StatusEnum(sa.status))
-        return Order.from_persistence(id=OrderID(value=uuid.UUID(sa.id)), status=status, items=dom_items)
+        return Order.from_persistence(
+            id=OrderID(value=uuid.UUID(sa.id)),
+            status=status,
+            items=dom_items,
+            version=sa.version,
+        )
 
     def save(self, order: Order) -> None:
+        order_id = str(order.id.value)
         # upsert 的に保存（子は置き換え。差分同期したければ工夫する）
-        existing = self.session.get(sa_models.Order, str(order.id.value))
+        existing = self.session.get(sa_models.Order, order_id)
         if not existing:
+            # 新規：存在しなければ INSERT（version はドメインの 1 をそのまま）
             sa = sa_models.Order(
                 id=str(order.id.value),
                 status=order.status.value.value,  # Status(StatusEnum) → str
                 items=_domain_to_sa_items(order.id, order.items),
+                version=order.version,
             )
             self.session.add(sa)
         else:
-            existing.status = order.status.value.value
-            # 子の差し替え（delete-orphan が効く）
-            existing.items[:] = _domain_to_sa_items(OrderID(value=uuid.UUID(existing.id)), order.items)
+            # 既存：親行を Compare-And-Swap(比較して更新)（WHERE id=? AND version=?）
+            result = self.session.execute(
+                update(sa_models.Order)
+                .where(sa_models.Order.id == order_id)
+                .where(sa_models.Order.version == order.version)  # 楽観的排他
+                .values(
+                    status=order.status.value.value,
+                    version=order.version + 1,  # バージョン更新
+                )
+            )
+            if result.rowcount != 1:
+                raise OptimisticLockError(f"Order {order_id} was updated by another transaction")
+
+            # 子行を置き換え（親の更新に成功した場合のみ）
+            self.session.execute(
+                delete(sa_models.OrderItem).where(sa_models.OrderItem.order_id == order_id)
+            )
+            self.session.add_all(_domain_to_sa_items(order.id, order.items))
 
 ################################
 # Unit of Work (トランザクション境界)
@@ -236,16 +278,20 @@ class UnitOfWork:
 
 if __name__ == "__main__":
     engine = create_engine("mysql+pymysql://root:root1234@127.0.0.1:3306/sample?charset=utf8mb4", echo=False)
+    sa_models.Base.metadata.drop_all(engine)
     sa_models.Base.metadata.create_all(engine)
     session_factory = lambda: Session(engine)
 
     # 1) ドメイン操作 (DBを意識しない)
     order = Order()
-    order.add_item(product_id=ProductID(), quantity=Quantity(value=2), unit_price=Money(amount=1000))
-    order.add_item(product_id=ProductID(), quantity=Quantity(value=1), unit_price=Money(amount=500))
-    order.confirm()
+    product_id_1 = ProductID()
+    product_id_2 = ProductID()
+    order.add_item(product_id=product_id_1, quantity=Quantity(value=2), unit_price=Money(amount=1000))
+    order.add_item(product_id=product_id_2, quantity=Quantity(value=1), unit_price=Money(amount=500))
     print(f"Order total: {order.total.amount}")  # 2500
-    print(f"Order status: {order.status.value.value}")  # confirmed
+    print(f"Order status: {order.status.value.value}")  # pending
+    print(f"Order version: {order.version}")  # pending
+    print()
 
     # 2) 永続化 (集約ルート単位で保存)
     with UnitOfWork(session_factory) as uow:
@@ -259,5 +305,28 @@ if __name__ == "__main__":
             raise RuntimeError("repository not initialized")
         loaded = uow.orders.get(order.id)
         assert loaded is not None
-        print(f"Loaded order total: {loaded.total.amount}")  # 2500
-        print(f"Loaded order status: {loaded.status.value.value}")  # confirmed
+        print(f"Order total: {loaded.total.amount}")  # 2500
+        print(f"Order status: {loaded.status.value.value}")  # pending
+        print(f"Order version: {loaded.version}")  # 1
+        print()
+
+    # 4) 2回目の更新
+    loaded.add_item(product_id=product_id_2, quantity=Quantity(value=3), unit_price=Money(amount=500))
+    loaded.confirm()
+    print(f"Order total: {loaded.total.amount}")  # 4000
+    print(f"Order status: {order.status.value.value}")  # pending
+    print()
+
+    with UnitOfWork(session_factory) as uow:
+        if uow.orders is None:
+            raise RuntimeError("repository not initialized")
+        uow.orders.save(loaded)
+
+    with UnitOfWork(session_factory) as uow:
+        if uow.orders is None:
+            raise RuntimeError("repository not initialized")
+        loaded = uow.orders.get(order.id)
+        assert loaded is not None
+        print(f"Order total: {loaded.total.amount}")  # 2500
+        print(f"Order status: {loaded.status.value.value}")  # confirmed
+        print(f"Order version: {loaded.version}")  # 2

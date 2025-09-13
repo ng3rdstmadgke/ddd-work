@@ -7,6 +7,7 @@ class Order(Base):
     __tablename__ = "orders"
     id: Mapped[str] = mapped_column(String(255), primary_key=True)           # UUIDをstr保存（RDBに合わせて型は調整）
     status: Mapped[str] = mapped_column(String(255), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1) # 楽観的な排他制御用のバージョン番号
     items: Mapped[list["OrderItem"]] = relationship(
         back_populates="order",
         cascade="all, delete-orphan",
