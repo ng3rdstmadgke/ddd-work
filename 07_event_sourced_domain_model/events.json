@@ -1,0 +1,51 @@
+[
+  {
+    "lead-id": 12,
+    "event-id": 0,
+    "event-type": "新規登録",
+    "name": "小林浩美",
+    "phone-number": "555-2951",
+    "timestamp": "2020-05-20T09:52:55.95Z"
+  },
+  {
+    "lead-id": 12,
+    "event-id": 1,
+    "event-type": "架電",
+    "timestamp": "2020-05-20T12:32:08.24Z"
+  },
+  {
+    "lead-id": 12,
+    "event-id": 2,
+    "event-type": "商談予定設定",
+    "followup-on": "2020-05-27T12:00:00.00Z",
+    "timestamp": "2020-05-20T12:32:08.24Z"
+  },
+  {
+    "lead-id": 12,
+    "event-id": 3,
+    "event-type": "連絡先変更",
+    "name": "小林裕美",
+    "phone-number": "555-8101",
+    "timestamp": "2020-05-20T12:32:08.24Z"
+  },
+  {
+    "lead-id": 12,
+    "event-id": 4,
+    "event-type": "架電",
+    "timestamp": "2020-05-27T12:02:12.51Z"
+  },
+  {
+    "lead-id": 12,
+    "event-id": 5,
+    "event-type": "注文受領",
+    "payment-deadline": "2020-05-30T12:02:12.51Z",
+    "timestamp": "2020-05-27T12:02:12.51Z"
+  },
+  {
+    "lead-id": 12,
+    "event-id": 6,
+    "event-type": "支払完了",
+    "status": "成約",
+    "timestamp": "2020-05-27T12:38:44.12Z"
+  }
+]
