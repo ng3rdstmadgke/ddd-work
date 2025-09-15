@@ -1,5 +1,5 @@
 from functools import singledispatchmethod
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, computed_field
 from datetime import datetime
 import enum
 import json
@@ -66,9 +66,9 @@ class PaymentConfirmedEvent(LeadEvent):
 #################################################
 class LeadStateModelProjection(BaseModel):
     lead_id: LeadID
-    name: Name
+    __names: dict[Name, bool] = PrivateAttr(default_factory=dict)
     status: LeadStatus
-    phone_number: PhoneNumber
+    __phone_numbers: dict[PhoneNumber, bool] = PrivateAttr(default_factory=dict)
     follow_up_on: datetime | None = Field(default=None)
     created_on: datetime | None = Field(default=None)
     updated_on: datetime | None = Field(default=None)
@@ -79,6 +79,26 @@ class LeadStateModelProjection(BaseModel):
         validate_assignment=True, # 属性の再代入時にもバリデーションを行う
     )
 
+    @computed_field
+    @property
+    def name(self) -> Name | None:
+        if self.__names:
+            return next(reversed(self.__names))
+        return None
+
+    @computed_field
+    @property
+    def phone_number(self) -> PhoneNumber | None:
+        if self.__phone_numbers:
+            return next(reversed(self.__phone_numbers))
+        return None
+
+    def search_name(self, name: Name) -> bool:
+        return name in self.__names
+
+    def search_phone_number(self, phone_number: PhoneNumber) -> bool:
+        return phone_number in self.__phone_numbers
+
     # NOTE: メソッドのオーバーロードにsingledispatchmethodを使用
     @singledispatchmethod
     def apply(self, event):
@@ -88,9 +108,9 @@ class LeadStateModelProjection(BaseModel):
     @apply.register
     def _(self, event: LeadInitializedEvent):
         self.lead_id = event.lead_id
-        self.name = event.name
+        self.__names[event.name] = True
         self.status = event.status
-        self.phone_number = event.phone_number
+        self.__phone_numbers[event.phone_number] = True
         self.created_on = event.timestamp
         self.updated_on = event.timestamp
         self.version = 0
@@ -110,8 +130,8 @@ class LeadStateModelProjection(BaseModel):
 
     @apply.register
     def _(self, event: ContactDetailsChangedEvent):
-        self.name = event.name
-        self.phone_number = event.phone_number
+        self.__names[event.name] = True
+        self.__phone_numbers[event.phone_number] = True
         self.updated_on = event.timestamp
         self.version += 1
 
@@ -174,9 +194,7 @@ if __name__ == "__main__":
 
     lead_state = LeadStateModelProjection(
         lead_id=LeadID(value=""),
-        name=Name(value=""),
         status=LeadStatus(value=LeadStatusEnum.NEW_LEAD),
-        phone_number=PhoneNumber(value=""),
     )
 
     # イベントを適用して状態を再構築
