@@ -201,4 +201,4 @@ if __name__ == "__main__":
     for e in events:
         lead_state.apply(e)
 
-    print(lead_state)
+    print(lead_state)  # lead_id=LeadID(value='12') status=LeadStatus(value=<LeadStatusEnum.CONVERTED: 'converted'>) follow_up_on=None created_on=datetime.datetime(2020, 5, 20, 9, 52, 55, 950000, tzinfo=datetime.timezone.utc) updated_on=datetime.datetime(2020, 5, 27, 12, 38, 44, 120000, tzinfo=datetime.timezone.utc) version=6 name=Name(value='小林裕美') phone_number=PhoneNumber(value='555-8101')

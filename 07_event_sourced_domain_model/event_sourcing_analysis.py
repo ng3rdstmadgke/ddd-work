@@ -70,6 +70,7 @@ class LeadStateModelProjection(BaseModel):
     status: LeadStatus
     phone_number: PhoneNumber
     follow_up_on: datetime | None = Field(default=None)
+    followups: int = Field(default=0)  # フォローアップの回数 
     created_on: datetime | None = Field(default=None)
     updated_on: datetime | None = Field(default=None)
     version: int = Field(default=0)
@@ -94,6 +95,7 @@ class LeadStateModelProjection(BaseModel):
         self.created_on = event.timestamp
         self.updated_on = event.timestamp
         self.version = 0
+        self.followups = 0
 
     @apply.register
     def _(self, event: ContactedEvent):
@@ -107,6 +109,7 @@ class LeadStateModelProjection(BaseModel):
         self.follow_up_on = event.timestamp
         self.status = event.status
         self.version += 1
+        self.followups += 1
 
     @apply.register
     def _(self, event: ContactDetailsChangedEvent):
@@ -183,4 +186,4 @@ if __name__ == "__main__":
     for e in events:
         lead_state.apply(e)
 
-    print(lead_state)  # lead_id=LeadID(value='12') name=Name(value='小林裕美') status=LeadStatus(value=<LeadStatusEnum.CONVERTED: 'converted'>) phone_number=PhoneNumber(value='555-8101') follow_up_on=None created_on=datetime.datetime(2020, 5, 20, 9, 52, 55, 950000, tzinfo=datetime.timezone.utc) updated_on=datetime.datetime(2020, 5, 27, 12, 38, 44, 120000, tzinfo=datetime.timezone.utc) version=6
+    print(lead_state)  # lead_id=LeadID(value='12') name=Name(value='小林裕美') status=LeadStatus(value=<LeadStatusEnum.CONVERTED: 'converted'>) phone_number=PhoneNumber(value='555-8101') follow_up_on=None followups=1 created_on=datetime.datetime(2020, 5, 20, 9, 52, 55, 950000, tzinfo=datetime.timezone.utc) updated_on=datetime.datetime(2020, 5, 27, 12, 38, 44, 120000, tzinfo=datetime.timezone.utc) version=6
