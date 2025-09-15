@@ -62,7 +62,7 @@ class PaymentConfirmedEvent(LeadEvent):
 
 
 #################################################
-# Entity
+# Entity・Aggregate
 #################################################
 class LeadStateModelProjection(BaseModel):
     lead_id: LeadID
