@@ -28,7 +28,6 @@ class TicketStateEnum(str, enum.Enum):
 ################################
 # Entity
 ################################
-
 class TicketState(BaseModel):
     id: TicketID
     version: int = Field(default=0)
@@ -78,6 +77,7 @@ class Ticket(BaseModel):
             self.domain_events.append(event)
         self.state.apply(event)
 
+    # エスカレーション要求コマンド
     def request_escalation(self):
         # OPEN かつまだエスカレートしていない場合にのみエスカレート
         if self.state.state == TicketStateEnum.OPEN and not self.state.is_escalated:
@@ -97,9 +97,11 @@ class TicketsRepository:
     def __init__(self):
         self.store = {}  # In-memory store, in real-world use a database
 
+    # イベントのロード
     def load_events(self, ticket_id: TicketID) -> list[DomainEvent]:
         return self.store.get(ticket_id.value, [])
 
+    # イベントの保存
     def save_events(self, ticket_id: TicketID, events: list[DomainEvent], expected_version: int):
         current_events = self.store.get(ticket_id.value, [])
 
@@ -108,14 +110,20 @@ class TicketsRepository:
         current_events.extend(events)
         self.store[ticket_id.value] = current_events
 
+    # チケットの変更をコミット
     def commit_changes(self, ticket: Ticket, original_version: int):
         self.save_events(ticket.state.id, ticket.domain_events, original_version)
         ticket.domain_events.clear()
 
+
+################################
+# API
+################################
 class TicketAPI:
     def __init__(self, tickets_repository: TicketsRepository):
         self.tickets_repository = tickets_repository
 
+    # チケットのエスカレーション要求API
     def request_escalation(self, id: TicketID):
         # イベントを取得
         events = self.tickets_repository.load_events(id)
