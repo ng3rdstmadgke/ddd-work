@@ -1,0 +1,1 @@
+from application.http.fastapi.api import app
